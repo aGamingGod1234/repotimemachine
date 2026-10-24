@@ -7,14 +7,6 @@ interface DocumentaryOutputProps {
   loading: boolean;
 }
 
-function LoglineBadge({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-block px-3 py-1 bg-[#fff4da] border-2 border-[#1a1a1a] rounded-lg text-sm font-semibold text-[#1a1a1a]">
-      {children}
-    </span>
-  );
-}
-
 function StatBadge({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border-2 border-[#1a1a1a] rounded-lg text-sm font-bold text-[#1a1a1a]">
@@ -220,23 +212,24 @@ function parseDocumentary(raw: string): ParsedDocumentary {
     const line = lines[i];
     const trimmed = line.trim();
 
-    // Detect sections
-    if (trimmed.startsWith('# The Story') || trimmed.startsWith('# ')) {
-      if (trimmed.startsWith('# ')) {
-        const titleMatch = trimmed.match(/^# (.+)/);
-        if (titleMatch && !result.title) {
-          result.title = titleMatch[1].replace(/The Story$/i, '').trim() || null;
-        }
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      const name = heading[2].replace(/^[^\p{L}\p{N}]+/u, '').trim();
+      if (heading[1] === '#') {
+        if (!result.title) result.title = heading[2];
+        currentSection = 'story';
+      } else if (/Genesis/i.test(name)) currentSection = 'genesis';
+      else if (/Scale|Stats|Today/i.test(name)) currentSection = 'stats';
+      else if (/Turning Point/i.test(name)) currentSection = 'turningPoints';
+      else if (/Characters|People/i.test(name)) currentSection = 'characters';
+      else if (/Eras?/i.test(name)) currentSection = 'eras';
+      else if (/Butterfly/i.test(name)) currentSection = 'butterfly';
+      else {
+        currentSection = '';
+        remainingLines.push(line);
       }
-      currentSection = 'story';
       continue;
     }
-    if (trimmed.includes('Genesis')) { currentSection = 'genesis'; continue; }
-    if (trimmed.includes('Scale') || trimmed.includes('Stats') || trimmed.includes('Today')) { currentSection = 'stats'; continue; }
-    if (trimmed.includes('Turning Point')) { currentSection = 'turningPoints'; continue; }
-    if (trimmed.includes('Characters') || trimmed.includes('Peopl')) { currentSection = 'characters'; continue; }
-    if (trimmed.includes('Eras') || trimmed.includes('Era')) { currentSection = 'eras'; continue; }
-    if (trimmed.includes('Butterfly')) { currentSection = 'butterfly'; continue; }
 
     if (!trimmed) {
       remainingLines.push(line);
@@ -246,16 +239,10 @@ function parseDocumentary(raw: string): ParsedDocumentary {
     // Parse based on current section
     switch (currentSection) {
       case 'story': {
-        // First non-empty line in story is the logline
-        if (!result.logline && !trimmed.startsWith('#') && !trimmed.startsWith('-') && !trimmed.startsWith('**')) {
-          // Skip logline-style lines that are clearly section headers
-          if (trimmed.length < 100) {
-            result.logline = trimmed.replace(/^["'""]|["'""]$/g, '');
-          }
-        }
-        // Check for stat-like lines
-        if (trimmed.includes('Stars:') || trimmed.includes('Forks:') || trimmed.includes('Issues:') || trimmed.includes('•')) {
-          result.stats.push(trimmed);
+        if (!result.logline && !trimmed.startsWith('-') && !trimmed.startsWith('**')) {
+          result.logline = trimmed.replace(/^['"]|['"]$/g, '');
+        } else if (trimmed.includes('Stars:') || trimmed.includes('Forks:') || trimmed.includes('Issues:')) {
+          result.stats.push(trimmed.replace(/\*\*/g, ''));
         } else {
           remainingLines.push(line);
         }
@@ -271,7 +258,7 @@ function parseDocumentary(raw: string): ParsedDocumentary {
         break;
       }
       case 'stats': {
-        if (trimmed) result.stats.push(trimmed.replace(/^[-•*]\s*/, ''));
+        if (trimmed) result.stats.push(trimmed.replace(/^[-•*]\s*/, '').replace(/\*\*/g, ''));
         break;
       }
       case 'turningPoints': {
@@ -280,7 +267,7 @@ function parseDocumentary(raw: string): ParsedDocumentary {
         const tpMatch = trimmed.match(/^[-•*]\s*\*\*([A-Z][a-z]+\s+\d{4})\*\*\s*[—–-]\s*(.+)/);
         if (tpMatch) {
           const date = tpMatch[1];
-          let rest = tpMatch[2];
+          const rest = tpMatch[2];
           // Split on first colon or period for event/detail
           const colonIdx = rest.indexOf(':');
           const periodIdx = rest.indexOf('. ');

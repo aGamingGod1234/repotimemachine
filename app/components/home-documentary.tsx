@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { parseGitHubRepoInput } from '@/lib/parse-github-repo';
 import DocumentaryOutput from '@/app/components/documentary-output';
 
@@ -21,22 +21,11 @@ export default function HomeDocumentary({ initialInput, autoSubmit }: HomeDocume
   const resultRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (initialInput && autoSubmit) {
-      handleGenerate(initialInput);
-    } else {
-      const params = new URLSearchParams(window.location.search);
-      const q = params.get('q');
-      if (q) {
-        setRepoInput(q);
-        handleGenerate(q);
-      }
-    }
-  }, []);
+  const requestInFlight = useRef(false);
 
-  const handleGenerate = async (override?: string) => {
-    const input = (override || repoInput).trim();
-    if (!input) return;
+  const handleGenerate = useCallback(async (value: string) => {
+    const input = value.trim();
+    if (!input || requestInFlight.current) return;
 
     const parsed = parseGitHubRepoInput(input);
     if (!parsed) {
@@ -44,11 +33,12 @@ export default function HomeDocumentary({ initialInput, autoSubmit }: HomeDocume
       return;
     }
 
+    requestInFlight.current = true;
     setLoading(true);
     setError(null);
     setDocumentary(null);
 
-    if (override) setRepoInput(override);
+    setRepoInput(input);
 
     try {
       const res = await fetch('/api/documentary', {
@@ -72,14 +62,24 @@ export default function HomeDocumentary({ initialInput, autoSubmit }: HomeDocume
       }, 200);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
-      setLoading(false);
     } finally {
+      requestInFlight.current = false;
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const input = initialInput && autoSubmit
+      ? initialInput
+      : new URLSearchParams(window.location.search).get('q');
+    if (input) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Direct links initiate the same asynchronous request as the form.
+      void handleGenerate(input);
+    }
+  }, [initialInput, autoSubmit, handleGenerate]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') handleGenerate();
+    if (e.key === 'Enter') void handleGenerate(repoInput);
   };
 
   const exampleRepos = [
@@ -117,7 +117,7 @@ export default function HomeDocumentary({ initialInput, autoSubmit }: HomeDocume
             />
           </div>
           <button
-            onClick={() => handleGenerate()}
+            onClick={() => handleGenerate(repoInput)}
             disabled={loading}
             className="relative group shrink-0"
           >

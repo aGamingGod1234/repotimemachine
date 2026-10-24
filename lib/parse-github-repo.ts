@@ -1,4 +1,6 @@
-const SLUG_SEGMENT = /^[a-zA-Z0-9._-]+$/;
+// Managed GitHub accounts may have an enterprise shortcode after an underscore.
+const OWNER_SEGMENT = /^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*(?:_[a-zA-Z0-9]{3,8})?$/;
+const REPO_SEGMENT = /^[a-zA-Z0-9._-]{1,100}$/;
 
 export function parseGitHubRepoInput(
   raw: string
@@ -6,29 +8,24 @@ export function parseGitHubRepoInput(
   const s = raw.trim();
   if (!s) return null;
 
-  const withoutGit = (name: string) => name.replace(/\.git$/i, "");
-
-  try {
-    const url =
-      s.includes("://") || s.startsWith("github.com")
-        ? new URL(s.startsWith("http") ? s : `https://${s}`)
-        : null;
-
-    if (url && url.hostname.replace(/^www\./, "") === "github.com") {
-      const parts = url.pathname.split("/").filter(Boolean);
-      if (parts.length < 2) return null;
-      return { owner: parts[0], repo: withoutGit(parts[1]) };
+  // Read the original path so URL normalization cannot silently erase traversal.
+  const githubUrl = /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^?#]*)(?:[?#].*)?$/i.exec(s);
+  const path = githubUrl ? githubUrl[1] : s;
+  let parts = path.replace(/\/$/, "").split("/");
+  if (githubUrl) {
+    try {
+      parts = parts.map(decodeURIComponent);
+    } catch {
+      return null;
     }
-  } catch {
-    // fall through to owner/repo form
   }
+  if (parts.length < 2 || (!githubUrl && parts.length !== 2)) return null;
+  if (parts.some((part) => !part || part === "." || part === ".." || part.includes("\\") ||
+    Array.from(part).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127))) return null;
 
-  const parts = s.split("/").filter(Boolean);
-  if (parts.length === 2 && !s.includes(" ")) {
-    return { owner: parts[0], repo: withoutGit(parts[1]) };
-  }
-
-  return null;
+  const [owner, repo] = parts;
+  if (owner !== owner.trim() || repo !== repo.trim() || !isValidGitHubRepoPath(owner, repo)) return null;
+  return { owner, repo: normalizeRepoSegment(repo) };
 }
 
 /** Strip trailing `.git` for path validation (URL segment may include it). */
@@ -40,6 +37,6 @@ export function normalizeRepoSegment(repo: string): string {
 export function isValidGitHubRepoPath(owner: string, repo: string): boolean {
   const o = owner.trim();
   const r = normalizeRepoSegment(repo);
-  if (!o || !r || o.includes("..") || r.includes("..")) return false;
-  return SLUG_SEGMENT.test(o) && SLUG_SEGMENT.test(r);
+  return o.length <= 39 && OWNER_SEGMENT.test(o) &&
+    r !== "." && r !== ".." && REPO_SEGMENT.test(r);
 }

@@ -7,9 +7,7 @@ type PageProps = {
 };
 
 export default async function RepoPage({ params }: PageProps) {
-  const { owner: ownerRaw, repo: repoRaw } = await params;
-  const owner = decodeURIComponent(ownerRaw);
-  const repo = decodeURIComponent(repoRaw);
+  const { owner, repo } = await params;
 
   if (!isValidGitHubRepoPath(owner, repo)) notFound();
 

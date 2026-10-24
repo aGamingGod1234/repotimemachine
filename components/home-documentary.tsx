@@ -41,13 +41,6 @@ export function DocumentaryHome({
   const sectionKeys = sections ? Object.keys(sections) : [];
   const [activeSection, setActiveSection] = useState(sectionKeys[0] ?? "");
 
-  // Update active section when documentary changes
-  useEffect(() => {
-    if (sectionKeys.length > 0) {
-      setActiveSection(sectionKeys[0]);
-    }
-  }, [documentary, sectionKeys.length]);
-
   const handleGenerate = useCallback(async (input: string) => {
     const parsed = parseGitHubRepoInput(input);
     if (!parsed) {
@@ -73,6 +66,7 @@ export function DocumentaryHome({
 
       const data = await res.json();
       setDocumentary(data.documentary);
+      setActiveSection(Object.keys(parseSections(data.documentary))[0] ?? "");
       setFromCache(data.fromCache ?? false);
       setOwner(parsed.owner);
       setRepo(parsed.repo);
@@ -86,7 +80,8 @@ export function DocumentaryHome({
   // Auto-submit on mount for direct URL access
   useEffect(() => {
     if (autoSubmit && initialRepoInput) {
-      handleGenerate(initialRepoInput);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Direct links initiate the same asynchronous request as the form.
+      void handleGenerate(initialRepoInput);
     }
   }, [autoSubmit, initialRepoInput, handleGenerate]);
 

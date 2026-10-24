@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DOCUMENTARY_SYSTEM_PROMPT, buildDocumentaryUserMessage, RepoDataForDocumentary } from "@/lib/documentary-prompt";
 import { getRepoMeta, getCommits, getContributors, getReleases, getFileTree, getReadme, getLanguages, getCodeFrequency, getTopPullRequests, getTopIssues } from "@/lib/github-client";
-import { kv } from "@vercel/kv";
+import { readDocumentary, cacheDocumentary } from "@/lib/documentary-cache";
+import { isValidGitHubRepoPath, normalizeRepoSegment } from "@/lib/parse-github-repo";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -13,41 +14,41 @@ const XAI_URL = "https://api.x.ai/v1/chat/completions";
 interface LlmTarget { url: string; apiKey: string; model: string; }
 
 function resolveLlm(): LlmTarget | { error: string } {
-  const xai = process.env.XAI_API_KEY?.trim();
-  const or = process.env.OPENROUTER_API_KEY?.trim();
-  const oa = process.env.OPENAI_API_KEY?.trim();
-  if (xai) return { url: XAI_URL, apiKey: xai, model: process.env.XAI_MODEL?.trim() || "grok-3" };
-  if (or) return { url: OPENROUTER_URL, apiKey: or, model: process.env.OPENROUTER_MODEL?.trim() || "openrouter/owl-alpha" };
-  if (oa) return { url: OPENAI_URL, apiKey: oa, model: process.env.OPENAI_MODEL?.trim() || "gpt-4.1" };
+  for (const [prefix, url] of [["XAI", XAI_URL], ["OPENROUTER", OPENROUTER_URL], ["OPENAI", OPENAI_URL]] as const) {
+    const apiKey = process.env[`${prefix}_API_KEY`]?.trim();
+    if (!apiKey) continue;
+    const model = process.env[`${prefix}_MODEL`]?.trim();
+    if (!model) return { error: `Set ${prefix}_MODEL to an available model ID for the configured provider.` };
+    return { url, apiKey, model };
+  }
   return { error: "No LLM API key. Set OPENROUTER_API_KEY, OPENAI_API_KEY, or XAI_API_KEY." };
-}
-
-function cacheKey(owner: string, repo: string): string {
-  return `doc:${owner}/${repo}`;
 }
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   if (!body) return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
 
-  const { owner, repo } = body;
-  if (!owner || !repo) return NextResponse.json({ error: "Owner and repo required." }, { status: 400 });
+  if (typeof body.owner !== "string" || typeof body.repo !== "string" ||
+      !isValidGitHubRepoPath(body.owner, body.repo)) {
+    return NextResponse.json({ error: "A valid GitHub owner and repo are required." }, { status: 400 });
+  }
+  const owner = body.owner.trim();
+  const repo = normalizeRepoSegment(body.repo);
+
+  const cached = await readDocumentary(owner, repo);
+  if (cached) return NextResponse.json({ documentary: cached, fromCache: true });
 
   const llm = resolveLlm();
   if ("error" in llm) return NextResponse.json({ error: llm.error }, { status: 500 });
 
-  // Check KV cache
-  const cached = await kv.get(cacheKey(owner, repo)) as string | null;
-  if (cached) return NextResponse.json({ documentary: cached, fromCache: true });
-
   try {
-    const [meta, commits, contributors, releases, tree, readme, languages, codeFreq, topPRs, topIssues] = await Promise.all([
-      getRepoMeta(owner, repo),
-      getCommits(owner, repo, "main").catch(() => getCommits(owner, repo, "master")),
+    const meta = await getRepoMeta(owner, repo);
+    const [commits, contributors, releases, tree, readme, languages, codeFreq, topPRs, topIssues] = await Promise.all([
+      getCommits(owner, repo, meta.default_branch),
       getContributors(owner, repo),
       getReleases(owner, repo),
-      getFileTree(owner, repo, "main").catch(() => getFileTree(owner, repo, "master")),
-      getReadme(owner, repo, "main").catch(() => getReadme(owner, repo, "master").catch(() => null)),
+      getFileTree(owner, repo, meta.default_branch),
+      getReadme(owner, repo, meta.default_branch).catch(() => null),
       getLanguages(owner, repo),
       getCodeFrequency(owner, repo).catch(() => null),
       getTopPullRequests(owner, repo).catch(() => []),
@@ -77,25 +78,27 @@ export async function POST(req: NextRequest) {
           { role: "system", content: DOCUMENTARY_SYSTEM_PROMPT },
           { role: "user", content: buildDocumentaryUserMessage(data) },
         ],
-        max_tokens: 3000,
-        temperature: 0.5,
+        ...(llm.url === OPENAI_URL ? { max_completion_tokens: 3000 } : { max_tokens: 3000 }),
       }),
     });
 
     if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`LLM error ${res.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`The language model provider returned HTTP ${res.status}. Check the configured model and API key.`);
     }
 
     const json = await res.json();
-    const documentary = json.choices?.[0]?.message?.content ?? "Failed to generate.";
+    const documentary = json?.choices?.[0]?.message?.content;
+    if (typeof documentary !== "string" || !documentary.trim()) {
+      throw new Error("The language model returned an empty documentary. Please try again.");
+    }
 
     // Cache for 24h
-    await kv.set(cacheKey(owner, repo), documentary, { ex: 86400 });
+    await cacheDocumentary(owner, repo, documentary);
 
     return NextResponse.json({ documentary, fromCache: false });
-  } catch (err: any) {
-    console.error("[documentary] Error:", err.message);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Failed to generate the documentary.";
+    console.error("[documentary] Error:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import HomeDocumentary from './components/home-documentary';
 
 export default function Page() {
@@ -7,16 +8,16 @@ export default function Page() {
         <div className="max-w-4xl mx-auto px-4">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-4">
-              <a href="/" className="hover:opacity-80 transition-opacity">
+              <Link href="/" className="hover:opacity-80 transition-opacity">
                 <span className="text-xl font-bold text-gray-900 tracking-tight">Repo</span>
                 <span className="text-xl font-bold text-[#FE4A60] tracking-tight">Time</span>
                 <span className="text-xl font-bold text-gray-900 tracking-tight">Machine</span>
-              </a>
+              </Link>
             </div>
             <nav className="flex items-center space-x-6">
-              <a href="/" className="font-semibold transition-transform hover:-translate-y-0.5 text-[#FE4A60]">
+              <Link href="/" className="font-semibold transition-transform hover:-translate-y-0.5 text-[#FE4A60]">
                 Home
-              </a>
+              </Link>
             </nav>
           </div>
         </div>
